@@ -10,7 +10,7 @@
     .no-scrollbar::-webkit-scrollbar { display: none; }
     .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     
-    /* Make taps on iPad feel more responsive (removes the grey tap highlight) */
+    /* Make taps on iPad feel more responsive */
     * {
       -webkit-tap-highlight-color: transparent;
     }
@@ -148,7 +148,8 @@
     // 1. CREDENTIALS & CONSTANTS
     // ---------------------------------------------------------
     
-    // O*NET recently migrated from Basic Auth to a single X-API-Key header.
+    // For client-side CORS implementations, O*NET expects the API key as a query parameter (client=)
+    // combined with domain registration in your O*NET account.
     const ONET_API_KEY = '12SLj-VobvB-aKFyW-zT9EP'; 
     const ONET_BASE_URL = 'https://services.onetcenter.org/ws/online/occupations/';
 
@@ -215,10 +216,14 @@
     // ---------------------------------------------------------
     // 2. HELPER FUNCTIONS
     // ---------------------------------------------------------
-    function getAuthHeaders() {
+    
+    // Build the URL with the client query parameter for client-side CORS access
+    function buildApiUrl(endpoint) {
+        return `${ONET_BASE_URL}${endpoint}?client=${ONET_API_KEY}`;
+    }
+
+    function getRequestHeaders() {
       const headers = new Headers();
-      // Required per current O*NET Web Services API standard
-      headers.append('X-API-Key', ONET_API_KEY);
       headers.append('Accept', 'application/json');
       return headers;
     }
@@ -239,23 +244,19 @@
         ui.errorBanner.classList.add('hidden');
         ui.deadEndBanner.classList.add('hidden');
         
-        // Hide content, show skeletons
         ui.currentDesc.classList.add('hidden');
         ui.skeletonDesc.classList.remove('hidden');
         ui.relatedContainer.classList.add('hidden');
         ui.skeletonBtns.classList.remove('hidden');
         
-        // Disable controls
         ui.undoBtn.disabled = true;
         ui.changeTargetBtn.disabled = true;
       } else {
-        // Hide skeletons, show content
         ui.skeletonDesc.classList.add('hidden');
         ui.currentDesc.classList.remove('hidden');
         ui.skeletonBtns.classList.add('hidden');
         ui.relatedContainer.classList.remove('hidden');
         
-        // Re-enable controls if applicable
         ui.undoBtn.disabled = historyStack.length <= 1;
         ui.changeTargetBtn.disabled = false;
       }
@@ -277,7 +278,6 @@
           ui.breadcrumbContainer.appendChild(arrow);
         }
       });
-      // Auto-scroll to end of breadcrumbs (smooth on iPad)
       ui.breadcrumbContainer.scrollTo({
         left: ui.breadcrumbContainer.scrollWidth,
         behavior: 'smooth'
@@ -286,10 +286,8 @@
 
     function showError(errorObj) {
       let msg = errorObj.message || 'Unknown error occurred.';
-      if (msg.includes('Failed to fetch') && window.location.protocol === 'file:') {
-        msg = 'Safari blocked the request because you opened this directly from your iPad Files app (file:// protocol restrictions). You may need to use an app like "Koder" to serve it locally, or upload it to a free host like GitHub Pages.';
-      } else if (msg.includes('401') || msg.includes('403')) {
-        msg = 'Authentication failed. Please verify your O*NET API Key is active.';
+      if (msg.includes('401') || msg.includes('403') || msg.includes('Failed to fetch')) {
+        msg = 'Authentication blocked. You MUST add "https://malakyeu.github.io" to the CORS Domains list in your O*NET account settings for this to work.';
       }
       ui.errorMsg.textContent = msg;
       ui.errorBanner.classList.remove('hidden');
@@ -310,8 +308,9 @@
       setLoadingState(true);
       
       try {
-        const targetRes = await fetch(`${ONET_BASE_URL}${targetSoc}`, { headers: getAuthHeaders() });
-        if (!targetRes.ok) throw new Error(`API returned ${targetRes.status}. Check API Key.`);
+        const targetUrl = buildApiUrl(targetSoc);
+        const targetRes = await fetch(targetUrl, { headers: getRequestHeaders() });
+        if (!targetRes.ok) throw new Error(`API returned ${targetRes.status}`);
         const targetData = await targetRes.json();
         
         ui.targetTitle.textContent = targetData.title || 'Target Job';
@@ -327,35 +326,36 @@
     }
 
     async function loadJob(socToLoad, isUndo = false) {
-      if (isFetching && !isUndo) return; // Prevent double-clicks
+      if (isFetching && !isUndo) return;
       setLoadingState(true);
 
       try {
-        const headers = getAuthHeaders();
+        const infoUrl = buildApiUrl(socToLoad);
+        const relatedUrl = buildApiUrl(`${socToLoad}/related`);
+        const headers = getRequestHeaders();
+        
         const [infoRes, relatedRes] = await Promise.all([
-          fetch(`${ONET_BASE_URL}${socToLoad}`, { headers }),
-          fetch(`${ONET_BASE_URL}${socToLoad}/related`, { headers })
+          fetch(infoUrl, { headers }),
+          fetch(relatedUrl, { headers })
         ]);
 
         if (!infoRes.ok || !relatedRes.ok) {
-           throw new Error(`Failed to fetch data (Status: ${infoRes.status}). Ensure API key is valid.`);
+           throw new Error(`Failed to fetch data (Status: ${infoRes.status})`);
         }
 
         const infoData = await infoRes.json();
         const relatedData = await relatedRes.json();
         const jobTitle = infoData.title || 'Unknown Title';
 
-        // Update State
         if (!isUndo) {
           historyStack.push({ code: socToLoad, title: jobTitle });
         }
         currentSoc = socToLoad;
         visitedSet.add(socToLoad);
 
-        // Update Main Header UI
         ui.moveCount.textContent = Math.max(0, historyStack.length - 1);
         ui.currentTitle.textContent = jobTitle;
-        ui.currentDesc.innerHTML = infoData.description || '<i>No description available for this role.</i>';
+        ui.currentDesc.innerHTML = infoData.description || '<i>No description available.</i>';
         
         const catInfo = getCategoryInfo(socToLoad);
         ui.currentTag.textContent = catInfo.name;
@@ -364,10 +364,7 @@
 
         renderBreadcrumbs();
 
-        // Render Related Buttons
         ui.relatedContainer.innerHTML = '';
-        
-        // Handle O*NET schema variations
         let relatedJobs = [];
         if (relatedData.related_occupations) {
             relatedJobs = relatedData.related_occupations;
@@ -383,7 +380,6 @@
             const btn = document.createElement('button');
             const btnCat = getCategoryInfo(job.code);
 
-            // Styling based on visited state
             if(isVisited) {
                btn.className = "text-left bg-slate-100 border border-slate-200 text-slate-400 font-medium py-3 px-4 rounded-xl shadow-sm transition-all flex-grow sm:flex-grow-0 opacity-70";
                btn.innerHTML = `<span class="block text-xs mb-1 opacity-50">${btnCat.name}</span><span class="line-through">${job.title}</span>`;
@@ -399,7 +395,6 @@
 
         setLoadingState(false);
         
-        // Win Condition Check
         if (currentSoc === targetSoc) {
           ui.winMoves.textContent = historyStack.length - 1;
           ui.winOverlay.classList.remove('hidden');
@@ -428,7 +423,8 @@
       ui.targetTitle.textContent = 'Fetching new target...';
       
       try {
-        const targetRes = await fetch(`${ONET_BASE_URL}${targetSoc}`, { headers: getAuthHeaders() });
+        const targetUrl = buildApiUrl(targetSoc);
+        const targetRes = await fetch(targetUrl, { headers: getRequestHeaders() });
         if (!targetRes.ok) throw new Error('API error fetching new target.');
         const targetData = await targetRes.json();
         
