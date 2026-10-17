@@ -148,10 +148,8 @@
     // 1. CREDENTIALS & CONSTANTS
     // ---------------------------------------------------------
     
-    // O*NET recently migrated from Basic Auth to a single X-API-Key header.
+    // O*NET Web Services API v2.0 authentication
     const ONET_API_KEY = '12SLj-VobvB-aKFyW-zT9EP'; 
-    
-    // UPDATED to v2 endpoint format
     const ONET_BASE_URL = 'https://api-v2.onetcenter.org/ws/online/occupations/';
 
     // Category mappings based on standard O*NET SOC major groups
@@ -218,11 +216,10 @@
     // 2. HELPER FUNCTIONS
     // ---------------------------------------------------------
     function getAuthHeaders() {
-      const headers = new Headers();
-      // Required per current O*NET Web Services API standard
-      headers.append('X-API-Key', ONET_API_KEY);
-      headers.append('Accept', 'application/json');
-      return headers;
+      return {
+        'X-API-Key': ONET_API_KEY,
+        'Accept': 'application/json'
+      };
     }
 
     function getRandomSOC() {
