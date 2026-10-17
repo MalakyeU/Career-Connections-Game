@@ -150,7 +150,7 @@
     
     // O*NET Web Services API v2.0 authentication
     const ONET_API_KEY = '12SLj-VobvB-aKFyW-zT9EP'; 
-    const ONET_BASE_URL = 'https://api-v2.onetcenter.org/ws/online/occupations/';
+    const ONET_BASE_URL = 'https://api-v2.onetcenter.org/online/occupations/';
 
     // Category mappings based on standard O*NET SOC major groups
     const CATEGORIES = {
@@ -333,7 +333,7 @@
         const headers = getAuthHeaders();
         const [infoRes, relatedRes] = await Promise.all([
           fetch(`${ONET_BASE_URL}${socToLoad}`, { headers }),
-          fetch(`${ONET_BASE_URL}${socToLoad}/related`, { headers })
+          fetch(`${ONET_BASE_URL}${socToLoad}/summary/related_occupations`, { headers })
         ]);
 
         if (!infoRes.ok || !relatedRes.ok) {
