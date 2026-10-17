@@ -147,8 +147,6 @@
     // ---------------------------------------------------------
     // 1. CREDENTIALS & CONSTANTS
     // ---------------------------------------------------------
-    
-    // O*NET Web Services API v2.0 authentication
     const ONET_API_KEY = '12SLj-VobvB-aKFyW-zT9EP'; 
     const ONET_BASE_URL = 'https://api-v2.onetcenter.org/online/occupations/';
 
@@ -180,10 +178,12 @@
     };
 
     const SOC_LIST = [
-      '11-1011.00', '15-1252.00', '17-2051.00', '19-2031.00', '21-1012.00', 
-      '23-1011.00', '25-2021.00', '27-1024.00', '29-1141.00', '33-3051.00', 
-      '35-1012.00', '39-9011.00', '41-2031.00', '43-4051.00', '47-2031.00', 
-      '53-3032.00', '29-2061.00', '15-2031.00'
+      '11-1011.00', '11-2021.00', '11-3031.00', '15-1252.00', '17-2051.00',
+      '17-2141.00', '19-2031.00', '21-1012.00', '23-1011.00', '25-2021.00',
+      '27-1024.00', '27-2012.00', '29-1021.00', '29-1141.00', '31-1121.00',
+      '33-3051.00', '35-1012.00', '35-2014.00', '37-2011.00', '39-9011.00',
+      '41-2011.00', '41-2031.00', '43-4051.00', '45-2092.00', '47-2031.00',
+      '49-3023.00', '53-3032.00', '29-2061.00', '15-2031.00', '15-1253.00'
     ];
 
     let targetSoc = '';
@@ -286,13 +286,38 @@
     function showError(errorObj) {
       let msg = errorObj.message || 'Unknown error occurred.';
       if (msg.includes('Failed to fetch') && window.location.protocol === 'file:') {
-        msg = 'Safari blocked the request because you opened this directly from your iPad Files app (file:// protocol restrictions). You may need to use an app like "Koder" to serve it locally, or upload it to a free host like GitHub Pages.';
+        msg = 'Safari blocked the request because you opened this directly from your iPad Files app (file:// protocol restrictions).';
       } else if (msg.includes('401') || msg.includes('403')) {
         msg = 'Authentication failed. Please verify your O*NET API Key is active.';
       }
       ui.errorMsg.textContent = msg;
       ui.errorBanner.classList.remove('hidden');
       ui.currentTitle.textContent = 'Connection Error';
+    }
+
+    // Helper that supports both v2.0 and v1.9 fallback paths just in case
+    async function fetchJobDetailsAndRelated(socCode) {
+      const headers = getAuthHeaders();
+      
+      // Fetch job overview
+      const infoRes = await fetch(`${ONET_BASE_URL}${socCode}`, { headers });
+      if (!infoRes.ok) {
+        throw new Error(`Failed to fetch job info (Status: ${infoRes.status}).`);
+      }
+      const infoData = await infoRes.json();
+
+      // Fetch related jobs (v2.0 uses /details/related_occupations or /summary/related_occupations)
+      let relatedRes = await fetch(`${ONET_BASE_URL}${socCode}/details/related_occupations`, { headers });
+      if (!relatedRes.ok) {
+        // Fallback to summary endpoint if details isn't available for this SOC
+        relatedRes = await fetch(`${ONET_BASE_URL}${socCode}/summary/related_occupations`, { headers });
+      }
+      if (!relatedRes.ok) {
+        throw new Error(`Failed to fetch related jobs (Status: ${relatedRes.status}).`);
+      }
+      const relatedData = await relatedRes.json();
+
+      return { infoData, relatedData };
     }
 
     // ---------------------------------------------------------
@@ -318,30 +343,20 @@
         ui.targetTag.textContent = targetCat.name;
         ui.targetTag.className = `inline-block mt-2 text-xs font-bold px-2 py-1 rounded ${targetCat.styling}`;
 
-        await loadJob(currentSoc);
+        // CRITICAL FIX: Release the fetch lock before calling loadJob(), or pass forceLoad = true
+        await loadJob(currentSoc, false, true);
       } catch (error) {
         setLoadingState(false);
         showError(error);
       }
     }
 
-    async function loadJob(socToLoad, isUndo = false) {
-      if (isFetching && !isUndo) return; // Prevent double-clicks
+    async function loadJob(socToLoad, isUndo = false, forceLoad = false) {
+      if (isFetching && !isUndo && !forceLoad) return; // Prevent double-clicks without blocking initial load
       setLoadingState(true);
 
       try {
-        const headers = getAuthHeaders();
-        const [infoRes, relatedRes] = await Promise.all([
-          fetch(`${ONET_BASE_URL}${socToLoad}`, { headers }),
-          fetch(`${ONET_BASE_URL}${socToLoad}/summary/related_occupations`, { headers })
-        ]);
-
-        if (!infoRes.ok || !relatedRes.ok) {
-           throw new Error(`Failed to fetch data (Status: ${infoRes.status}). Ensure API key is valid.`);
-        }
-
-        const infoData = await infoRes.json();
-        const relatedData = await relatedRes.json();
+        const { infoData, relatedData } = await fetchJobDetailsAndRelated(socToLoad);
         const jobTitle = infoData.title || 'Unknown Title';
 
         // Update State
@@ -366,12 +381,12 @@
         // Render Related Buttons
         ui.relatedContainer.innerHTML = '';
         
-        // Handle O*NET schema variations
+        // Handle O*NET v2.0 ("occupation" array) and v1.9 ("related_occupations" array) schemas
         let relatedJobs = [];
-        if (relatedData.related_occupations) {
-            relatedJobs = relatedData.related_occupations;
-        } else if (relatedData.occupation) {
-            relatedJobs = relatedData.occupation;
+        if (Array.isArray(relatedData.occupation)) {
+          relatedJobs = relatedData.occupation;
+        } else if (Array.isArray(relatedData.related_occupations)) {
+          relatedJobs = relatedData.related_occupations;
         }
 
         if (relatedJobs.length === 0) {
